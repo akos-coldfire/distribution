@@ -62,6 +62,7 @@ contract("Distribution", function (accounts) {
                     result, "Deposit",
                    {from: owner, to: DT.address, amount: ether("1"), state: (Distribution.State.deposited).toString()}
                 );
+                ((await token.balanceOf(owner)).toString()).should.be.bignumber.equal(ether("999"));
             });
 
             it("shouldn`t deposit tokens if amount is zero", async() => {
@@ -92,6 +93,7 @@ contract("Distribution", function (accounts) {
                     result,"EmergencyWithdraw",
                     {to: owner, amount: ether("1"), state: (Distribution.State.removed).toString()}
                 );
+                ((await token.balanceOf(owner)).toString()).should.be.bignumber.equal(ether("1000"));
             });
 
             it("shouldn`t transfer amount of reward tokens if amount is zero", async() => {
@@ -102,6 +104,7 @@ contract("Distribution", function (accounts) {
             });
 
             it("shouldn`t transfer amount of reward tokens if insufficient tokens balance", async() => {
+                await DT.deposit(ether("1000"), {from: owner});
                 await expectRevert(
                     DT.emergencyWithdraw(ether("2000"), {from: owner}), 
                     "Insufficient tokens balance"
@@ -109,35 +112,61 @@ contract("Distribution", function (accounts) {
             });
 
             it("shouldn`t transfer amount of reward tokens back to the owner from someone other than owner", async() => {
+                await DT.deposit(ether("10"), {from: owner});
                 await expectRevert(
                     DT.emergencyWithdraw(ether("2"), {from: beneficiary1}), 
                     "Ownable: caller is not the owner"
                 );
             });
 
-            it("should add beneficiary with tokens amount for each beneficiary from owner", async() => {
-                result = await DT.addBeneficiaries([beneficiary1, beneficiary2], [ether("90"), ether("90")], {from: owner});
+            it("should add beneficiaries correctly", async() => {
+                await DT.deposit(ether("200"), {from: owner});
+                await DT.addBeneficiaries([beneficiary1, beneficiary2], [ether("90"), ether("90")], {from: owner});
+                await DT.lockRewards(false, {from: owner});
+                result = await DT.claim({from: beneficiary1});
                 expectEvent(
-                    result, "AddBeneficiary",
+                    result, "TransferReward",
                     {who: beneficiary1, amount: ether("90"), state: (Distribution.State.distributed).toString()}
                 );
+                await DT.lockRewards(false, {from: owner});
+                result2 = await DT.claim({from: beneficiary2});
                 expectEvent(
-                    result, "AddBeneficiary",
+                    result2, "TransferReward",
                     {who: beneficiary2, amount: ether("90"), state: (Distribution.State.distributed).toString()}
+                );
+                (await token.balanceOf(beneficiary1)).should.be.bignumber.equal(ether("90"));
+                (await token.balanceOf(beneficiary2)).should.be.bignumber.equal(ether("90"));
+            });
+
+            it("shouldn`t add beneficiaries correctly if length of arrays is invalid", async() => {
+                await DT.deposit(ether("200"), {from: owner});
+                await expectRevert(
+                    DT.addBeneficiaries([beneficiary1, beneficiary2], [ether("10"), ether("10"), ether("10")], {from: owner}), 
+                    "Length of arrays is invalid"
+                );
+                await DT.lockRewards(false, {from: owner});
+                result = await DT.claim({from: beneficiary1});
+                expectEvent(
+                    result, "TransferReward",
+                    {who: beneficiary1, amount: ether("0"), state: (Distribution.State.distributed).toString()}
                 );
             });
 
-            it("should add one beneficiary with tokens amount from owner", async() => {
-                result = await DT.addBeneficiary(beneficiary1, ether("100"), {from: owner});
+            it("should add one beneficiary correctly", async() => {
+                await DT.deposit(ether("15"), {from: owner});
+                await DT.addBeneficiary(beneficiary3, ether("10"), {from: owner});
+                await DT.lockRewards(false, {from: owner});
+                result = await DT.claim({from: beneficiary3});
                 expectEvent(
-                    result, "AddBeneficiary",
-                    {who: beneficiary1, amount: ether("100"), state: (Distribution.State.distributed).toString()}
+                    result, "TransferReward",
+                    {who: beneficiary3, amount: ether("10"), state: (Distribution.State.distributed).toString()}
                 );
+                (await token.balanceOf(beneficiary3)).should.be.bignumber.equal(ether("10"));
             });
 
             it("shouldn`t add beneficiaries if address is zero", async() => {
                 await expectRevert(
-                    DT.addBeneficiaries([constants.ZERO_ADDRESS], [ether("10"), ether("10")], {from: owner}), 
+                    DT.addBeneficiaries([constants.ZERO_ADDRESS, constants.ZERO_ADDRESS], [ether("10"), ether("10")], {from: owner}), 
                     "Address of Beneficiaries cannot be zero"
                 );
                 await expectRevert(
@@ -146,7 +175,7 @@ contract("Distribution", function (accounts) {
                 );
             });
 
-            it("shouldn`t add beneficiaries if insufficient tokens balance", async() => {
+            it("shouldn`t add beneficiaries if amount is zero", async() => {
                 await expectRevert(
                     DT.addBeneficiaries([beneficiary1, beneficiary2], [0, 0], {from: owner}), 
                     "Balances of Beneficiaries cannot be zero"
@@ -169,12 +198,16 @@ contract("Distribution", function (accounts) {
             });
 
             it("should decrease amount of rewards for benefeciary", async() => {
-                await DT.addBeneficiary(beneficiary1, ether("100"), {from: owner});
-                result = await DT.decreaseReward(beneficiary1, ether("10"), {from: owner});
+                await DT.deposit(ether("20"), {from: owner});
+                await DT.addBeneficiary(beneficiary1, ether("15"), {from: owner});
+                result = await DT.decreaseReward(beneficiary1, ether("5"), {from: owner});
                 expectEvent(
                     result, "DecreaseReward",
-                    {who: beneficiary1, amount: ether("10"), state: (Distribution.State.removed).toString()}
+                    {who: beneficiary1, amount: ether("5"), state: (Distribution.State.removed).toString()}
                 );
+                await DT.lockRewards(false, {from: owner});
+                await DT.claim({from: beneficiary1});
+                (await token.balanceOf(beneficiary1)).should.be.bignumber.equal(ether("10"));
             });
 
             it("shouldn`t decrease amount if address is zero or amount is zero", async() => {
@@ -195,15 +228,32 @@ contract("Distribution", function (accounts) {
                 );
             });
 
-            it("should lock rewards for beneficiary", async() => {
-                await token.mint(DT.address, ether("1000"));
-                await DT.lockRewards(true, {from: owner});
-                (await token.balanceOf(DT.address)).should.be.bignumber.equal("0");
+            it("shouldn`t transfer reward tokens to beneficiary correct if insufficient token`s balance", async() => {
+                await DT.deposit(ether("15"), {from: owner});
+                await DT.addBeneficiary(beneficiary3, ether("20"), {from: owner});
+                await DT.lockRewards(false, {from: owner});
+                await expectRevert(DT.claim({from: beneficiary3}), "ERC20: transfer amount exceeds balance");
+                (await token.balanceOf(beneficiary3)).should.be.bignumber.equal(ether("0"));
             });
 
-            it("should unlock rewards for beneficiary", async() => {
+            it("shouldn`t transfer reward tokens to beneficiary correct if already paid", async() => {
+                await DT.deposit(ether("20"), {from: owner});
+                await DT.addBeneficiary(beneficiary3, ether("15"), {from: owner});
                 await DT.lockRewards(false, {from: owner});
-                (await token.balanceOf(DT.address)).should.be.bignumber.equal("0");
+                await DT.claim({from: beneficiary3});
+                await expectRevert(DT.claim({from: beneficiary3}), "Amount is paid");
+                (await token.balanceOf(beneficiary3)).should.be.bignumber.equal(ether("15"));
+            });
+
+            it("should lock rewards for beneficiary", async() => {
+                await DT.deposit(ether("15"), {from: owner});
+                await DT.addBeneficiary(beneficiary3, ether("10"), {from: owner});
+                await DT.lockRewards(true, {from: owner});
+                await expectRevert(
+                    DT.claim({from: beneficiary3}),
+                    "Not allowed - locked"
+                );
+                (await token.balanceOf(beneficiary3)).should.be.bignumber.equal(ether("0"));
             });
 
             it("shouldn`t lock/unlock rewards from someone other than owner", async() => {
