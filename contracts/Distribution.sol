@@ -15,6 +15,7 @@ contract Distribution is Ownable {
     struct BeneficiaryInfo {
         address beneficiary; 
         uint256 amountToken; 
+        bool alreadyPaid;
     }
 
     RewardToken public token;
@@ -24,6 +25,7 @@ contract Distribution is Ownable {
 
     event Deposit(address indexed from, address indexed to, uint256 amount, State state);
     event DecreaseReward(address indexed who, uint256 amount, State state);
+    event TransferReward(address indexed who, uint256 amount, State state);
     event EmergencyWithdraw(address indexed to, uint256 amount, State state);
 
     constructor(
@@ -92,6 +94,7 @@ contract Distribution is Ownable {
             beneficiaryInfo = beneficiaries[_beneficiaries[i]];
             beneficiaryInfo.beneficiary = _beneficiaries[i];
             beneficiaryInfo.amountToken = _amount[i];
+            beneficiaryInfo.alreadyPaid = false;
             beneficiaries[_beneficiaries[i]] = beneficiaryInfo;
         }
     }
@@ -104,6 +107,7 @@ contract Distribution is Ownable {
         BeneficiaryInfo storage beneficiaryInfo = beneficiaries[_beneficiary];
         beneficiaryInfo.beneficiary = _beneficiary;
         beneficiaryInfo.amountToken = _amount;
+        beneficiaryInfo.alreadyPaid = false;
         beneficiaries[_beneficiary] = beneficiaryInfo;
     }
 
@@ -116,7 +120,7 @@ contract Distribution is Ownable {
         emit DecreaseReward(_beneficiary, _amount, State.removed);
     }
     
-    // Should transfer amount of reward tokens back to the owner
+    // Should transfer amout of reward tokens back to the owner
     function emergencyWithdraw(uint256 _amount) 
         public onlyOwner {
         require(
@@ -133,7 +137,11 @@ contract Distribution is Ownable {
 
     // Should transfer reward tokens to beneficiary
     function claim() whenNotLocked public {
-        token.safeTransfer(msg.sender, beneficiaries[msg.sender].amountToken);
+        require(!beneficiaries[msg.sender].alreadyPaid, "Amount is paid");
+        uint256 amountToken = beneficiaries[msg.sender].amountToken;
+        token.safeTransfer(msg.sender, amountToken);
+        beneficiaries[msg.sender].alreadyPaid = true;
+        emit TransferReward(msg.sender, amountToken, State.distributed);
     }
 
     // Should lock/unlock rewards for beneficiary
